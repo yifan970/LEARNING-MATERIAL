@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>军理学习资料</title>
+    <title>学习资料</title>
     <style>
         /* 重置样式 */
         * {
@@ -37,6 +37,22 @@
             align-items: center;
             overscroll-behavior: none;
             padding: 0;
+        }
+
+        /* 标题栏样式 */
+        #title-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: white;
+            color: var(--primary-blue);
+            text-align: center;
+            padding: 15px 0;
+            font-size: 18px;
+            font-weight: bold;
+            z-index: 30;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
 
         /* 加载指示器 */
@@ -95,14 +111,23 @@
             position: relative;
             width: 100%;
             max-width: 100%;
-            height: calc(100vh - 5px); /* 留出一点空间防止溢出 */
+            height: calc(100vh - 60px); /* 留出标题栏空间 */
             display: flex;
             justify-content: center;
             align-items: center;
             overflow: hidden;
             padding: 0;
-            margin: 0;
+            margin: 60px 0 0; /* 为标题栏留出空间 */
             touch-action: none;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
         }
 
         #pdf-canvas {
@@ -114,13 +139,47 @@
             box-shadow: 0 5px 25px rgba(0, 0, 0, 0.3);
             background: white;
             transition: transform 0.1s ease;
-            transform-origin: 0 0;
+            transform-origin: center center;
+            position: absolute;
+        }
+        
+        /* 抽出动画效果 */
+        .page-transition {
+            transition: transform 0.6s ease, opacity 0.6s ease;
+        }
+        
+        .slide-out-left {
+            transform: translateX(calc(-100% - 20px));
+            opacity: 0;
+        }
+        
+        .slide-out-right {
+            transform: translateX(calc(100% + 20px));
+            opacity: 0;
+        }
+        
+        .slide-in-left {
+            animation: slideInLeft 0.6s forwards;
+        }
+        
+        .slide-in-right {
+            animation: slideInRight 0.6s forwards;
+        }
+        
+        @keyframes slideInLeft {
+            0% { transform: translateX(calc(-100% - 20px)); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideInRight {
+            0% { transform: translateX(calc(100% + 20px)); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
         }
 
         /* 页面指示器 */
         .page-indicator {
             position: fixed;
-            top: 15px;
+            top: 70px; /* 在标题栏下方 */
             left: 50%;
             transform: translateX(-50%);
             background: var(--control-bg);
@@ -239,7 +298,7 @@
         /* 状态栏适配 */
         @media (max-height: 600px) {
             .page-indicator {
-                top: 5px;
+                top: 60px;
                 padding: 6px 15px;
                 font-size: 13px;
             }
@@ -258,6 +317,16 @@
                 width: 35px;
                 height: 35px;
                 font-size: 20px;
+            }
+            
+            #title-bar {
+                padding: 10px 0;
+                font-size: 16px;
+            }
+            
+            #pdf-container {
+                height: calc(100vh - 50px);
+                margin-top: 50px;
             }
         }
         
@@ -287,6 +356,9 @@
     </style>
 </head>
 <body>
+    <!-- 添加标题栏 -->
+    <div id="title-bar">审计观察</div>
+    
     <div id="error-message"></div>
     <div id="loader">
         <div class="spinner"></div>
@@ -294,7 +366,9 @@
     </div>
     
     <div id="pdf-container">
-        <canvas id="pdf-canvas"></canvas>
+        <div class="canvas-wrapper">
+            <canvas id="pdf-canvas"></canvas>
+        </div>
     </div>
     
     <!-- 导航按钮 -->
@@ -326,6 +400,7 @@
             'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
         const container = document.getElementById('pdf-container');
+        const canvasWrapper = document.querySelector('.canvas-wrapper');
         const canvas = document.getElementById('pdf-canvas');
         const ctx = canvas.getContext('2d');
         const loader = document.getElementById('loader');
@@ -368,7 +443,9 @@
             isPinching: false,
             dragStart: { x: 0, y: 0 },
             originalCanvasSize: { width: 0, height: 0 },
-            renderScale: 1
+            renderScale: 1,
+            // 翻页动画状态
+            isAnimating: false
         };
 
         // 显示错误信息
@@ -541,10 +618,79 @@
             }
         };
 
+        // 翻页动画 - 抽出效果（修复居中问题）
+        async function playPageSlideAnimation(direction) {
+            if (config.isAnimating) return;
+            config.isAnimating = true;
+            
+            // 保存当前页面状态
+            const currentPage = config.currentPage;
+            const tempScale = config.scale;
+            const tempOffset = {...config.offset};
+            
+            // 1. 创建临时canvas
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // 复制当前canvas内容
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            tempCtx.drawImage(canvas, 0, 0);
+            
+            // 设置样式
+            tempCanvas.style.position = 'absolute';
+            tempCanvas.style.top = '0';
+            tempCanvas.style.left = '0';
+            tempCanvas.style.width = canvas.style.width;
+            tempCanvas.style.height = canvas.style.height;
+            tempCanvas.style.boxShadow = '0 5px 25px rgba(0, 0, 0, 0.3)';
+            tempCanvas.style.background = 'white';
+            tempCanvas.style.transition = 'transform 0.6s ease, opacity 0.6s ease';
+            tempCanvas.style.transform = canvas.style.transform; // 保持当前变换
+            
+            // 添加到容器
+            canvasWrapper.appendChild(tempCanvas);
+            
+            // 2. 隐藏原始canvas
+            canvas.style.visibility = 'hidden';
+            
+            // 3. 更新页面并渲染新内容
+            config.currentPage = direction === 'next' ? currentPage + 1 : currentPage - 1;
+            await renderPage();
+            
+            // 4. 恢复缩放和平移状态
+            config.scale = tempScale;
+            config.offset = tempOffset;
+            applyTransform();
+            
+            // 5. 设置动画起始状态
+            if (direction === 'next') {
+                tempCanvas.classList.add('slide-out-left');
+                canvas.classList.add('slide-in-right');
+            } else {
+                tempCanvas.classList.add('slide-out-right');
+                canvas.classList.add('slide-in-left');
+            }
+            
+            // 6. 显示原始canvas
+            canvas.style.visibility = 'visible';
+            
+            // 7. 等待动画完成
+            await new Promise(resolve => setTimeout(resolve, 600));
+            
+            // 8. 清理
+            canvasWrapper.removeChild(tempCanvas);
+            canvas.classList.remove('slide-in-right', 'slide-in-left');
+            tempCanvas.classList.remove('slide-out-left', 'slide-out-right');
+            
+            config.isAnimating = false;
+        }
+
         // 事件监听设置
         const setupEventListeners = () => {
             // 键盘翻页
             document.addEventListener('keydown', (e) => {
+                if (config.isAnimating) return;
                 if (e.key === 'ArrowLeft') goToPrevPage();
                 if (e.key === 'ArrowRight') goToNextPage();
                 if (e.key === '+' || e.key === '=') zoomIn();
@@ -568,6 +714,7 @@
             let isSwiping = false;
             
             container.addEventListener('touchstart', (e) => {
+                if (config.isAnimating) return;
                 if (e.touches.length === 1) {
                     // 单指触摸 - 准备平移
                     const touch = e.touches[0];
@@ -608,6 +755,7 @@
             }, { passive: false });
             
             container.addEventListener('touchmove', (e) => {
+                if (config.isAnimating) return;
                 if (config.isDragging && e.touches.length === 1) {
                     // 单指移动 - 平移
                     e.preventDefault();
@@ -657,6 +805,7 @@
             }, { passive: false });
             
             container.addEventListener('touchend', (e) => {
+                if (config.isAnimating) return;
                 if (config.isDragging) {
                     // 单指结束 - 结束平移
                     config.isDragging = false;
@@ -685,7 +834,7 @@
             
             // 点击左右边缘翻页
             container.addEventListener('click', (e) => {
-                if (config.scale !== 1) return; // 缩放状态下不触发翻页
+                if (config.isAnimating || config.scale !== 1) return; // 缩放状态下不触发翻页
                 
                 const rect = container.getBoundingClientRect();
                 const clickX = e.clientX - rect.left;
@@ -700,7 +849,7 @@
             
             // 窗口大小变化时重新渲染
             window.addEventListener('resize', () => {
-                if (!config.isRendering) {
+                if (!config.isRendering && !config.isAnimating) {
                     resetZoomAndPan();
                     renderPage();
                 }
@@ -733,16 +882,14 @@
 
         // 翻页功能
         const goToPrevPage = () => {
-            if (config.currentPage > 1) {
-                config.currentPage--;
-                renderPage();
+            if (config.currentPage > 1 && !config.isAnimating) {
+                playPageSlideAnimation('prev');
             }
         };
 
         const goToNextPage = () => {
-            if (config.currentPage < config.totalPages) {
-                config.currentPage++;
-                renderPage();
+            if (config.currentPage < config.totalPages && !config.isAnimating) {
+                playPageSlideAnimation('next');
             }
         };
 
