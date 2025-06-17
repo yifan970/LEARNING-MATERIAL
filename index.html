@@ -18,6 +18,7 @@
             --dark-blue: #082654;
             --light-blue: #04365f;
             --background-blue: #07416a;
+            --control-bg: rgba(0, 0, 0, 0.7);
         }
 
         html, body {
@@ -101,6 +102,7 @@
             overflow: hidden;
             padding: 0;
             margin: 0;
+            touch-action: none;
         }
 
         #pdf-canvas {
@@ -112,6 +114,7 @@
             box-shadow: 0 5px 25px rgba(0, 0, 0, 0.3);
             background: white;
             transition: transform 0.1s ease;
+            transform-origin: 0 0;
         }
 
         /* 页面指示器 */
@@ -120,7 +123,7 @@
             top: 15px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
+            background: var(--control-bg);
             color: white;
             padding: 8px 20px;
             border-radius: 25px;
@@ -139,7 +142,7 @@
             transform: translateY(-50%);
             width: 50px;
             height: 50px;
-            background: rgba(0, 0, 0, 0.6);
+            background: var(--control-bg);
             border-radius: 50%;
             display: flex;
             justify-content: center;
@@ -215,7 +218,7 @@
         .zoom-btn {
             width: 40px;
             height: 40px;
-            background: rgba(0, 0, 0, 0.6);
+            background: var(--control-bg);
             border-radius: 50%;
             display: flex;
             justify-content: center;
@@ -225,6 +228,12 @@
             font-size: 24px;
             cursor: pointer;
             backdrop-filter: blur(5px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            transition: transform 0.1s;
+        }
+        
+        .zoom-btn:active {
+            transform: scale(0.95);
         }
         
         /* 状态栏适配 */
@@ -243,6 +252,36 @@
             .zoom-controls {
                 bottom: 10px;
                 right: 10px;
+            }
+            
+            .zoom-btn {
+                width: 35px;
+                height: 35px;
+                font-size: 20px;
+            }
+        }
+        
+        /* 缩放指示器 */
+        .zoom-level {
+            position: fixed;
+            bottom: 85px;
+            right: 20px;
+            background: var(--control-bg);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.3s;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+        
+        @media (max-height: 600px) {
+            .zoom-level {
+                bottom: 75px;
+                right: 15px;
             }
         }
     </style>
@@ -277,6 +316,8 @@
         <button class="zoom-btn" id="reset-zoom">↺</button>
     </div>
     
+    <div class="zoom-level" id="zoom-indicator">100%</div>
+    
     <!-- 使用pdf.js官方CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script>
@@ -294,6 +335,7 @@
         const zoomInBtn = document.getElementById('zoom-in');
         const zoomOutBtn = document.getElementById('zoom-out');
         const resetZoomBtn = document.getElementById('reset-zoom');
+        const zoomIndicator = document.getElementById('zoom-indicator');
 
         // 创建页面指示器
         const pageIndicator = document.createElement('div');
@@ -352,6 +394,17 @@
             }, 3000);
         }
         
+        // 更新缩放指示器
+        function updateZoomIndicator() {
+            zoomIndicator.textContent = `${Math.round(config.scale * 100)}%`;
+            zoomIndicator.style.opacity = '1';
+            
+            // 2秒后淡出
+            setTimeout(() => {
+                zoomIndicator.style.opacity = '0';
+            }, 2000);
+        }
+        
         // 应用变换到Canvas
         function applyTransform() {
             canvas.style.transform = `translate(${config.offset.x}px, ${config.offset.y}px) scale(${config.scale})`;
@@ -363,8 +416,11 @@
             const canvasRect = canvas.getBoundingClientRect();
             
             // 计算最大可偏移范围
-            const maxX = Math.max(0, (canvasRect.width * config.scale - containerRect.width) / 2);
-            const maxY = Math.max(0, (canvasRect.height * config.scale - containerRect.height) / 2);
+            const scaledWidth = canvasRect.width * config.scale;
+            const scaledHeight = canvasRect.height * config.scale;
+            
+            const maxX = Math.max(0, (scaledWidth - containerRect.width) / 2);
+            const maxY = Math.max(0, (scaledHeight - containerRect.height) / 2);
             
             // 应用限制
             config.offset.x = Math.max(-maxX, Math.min(maxX, config.offset.x));
@@ -378,6 +434,7 @@
             config.scale = 1;
             config.offset = { x: 0, y: 0 };
             applyTransform();
+            updateZoomIndicator();
         }
 
         // 加载PDF文档
@@ -490,6 +547,9 @@
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'ArrowLeft') goToPrevPage();
                 if (e.key === 'ArrowRight') goToNextPage();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-' || e.key === '_') zoomOut();
+                if (e.key === '0') resetZoomAndPan();
             });
             
             // 按钮翻页
@@ -497,18 +557,8 @@
             nextBtn.addEventListener('click', goToNextPage);
             
             // 缩放按钮
-            zoomInBtn.addEventListener('click', () => {
-                config.scale = Math.min(config.maxScale, config.scale + 0.2);
-                applyTransform();
-                clampOffset();
-            });
-            
-            zoomOutBtn.addEventListener('click', () => {
-                config.scale = Math.max(config.minScale, config.scale - 0.2);
-                applyTransform();
-                clampOffset();
-            });
-            
+            zoomInBtn.addEventListener('click', zoomIn);
+            zoomOutBtn.addEventListener('click', zoomOut);
             resetZoomBtn.addEventListener('click', resetZoomAndPan);
             
             // 触摸事件处理
@@ -529,6 +579,7 @@
                     };
                     config.isDragging = true;
                     isSwiping = true;
+                    touchStartTime = Date.now();
                 } else if (e.touches.length === 2) {
                     // 双指触摸 - 准备缩放
                     e.preventDefault();
@@ -547,10 +598,11 @@
                     config.lastScale = config.scale;
                     config.lastOffset = { ...config.offset };
                     
-                    // 计算相对于canvas中心的偏移
+                    // 计算相对于容器的中心点
+                    const containerRect = container.getBoundingClientRect();
                     config.pinchCenter = {
-                        x: midX - container.getBoundingClientRect().left,
-                        y: midY - container.getBoundingClientRect().top
+                        x: midX - containerRect.left,
+                        y: midY - containerRect.top
                     };
                 }
             }, { passive: false });
@@ -597,6 +649,7 @@
                         config.offset.y = centerY - (centerY - config.lastOffset.y) * scaleRatio;
                         
                         applyTransform();
+                        updateZoomIndicator();
                     }
                     
                     config.lastDistance = distance;
@@ -618,6 +671,9 @@
                         if (diffX > 0) goToNextPage();
                         else goToPrevPage();
                     }
+                    
+                    // 确保在平移结束后限制边界
+                    clampOffset();
                 } else if (config.isPinching) {
                     // 双指结束 - 结束缩放
                     config.isPinching = false;
@@ -645,6 +701,7 @@
             // 窗口大小变化时重新渲染
             window.addEventListener('resize', () => {
                 if (!config.isRendering) {
+                    resetZoomAndPan();
                     renderPage();
                 }
             });
@@ -658,6 +715,21 @@
                 e.preventDefault();
             });
         };
+        
+        // 缩放功能
+        function zoomIn() {
+            config.scale = Math.min(config.maxScale, config.scale + 0.2);
+            applyTransform();
+            clampOffset();
+            updateZoomIndicator();
+        }
+        
+        function zoomOut() {
+            config.scale = Math.max(config.minScale, config.scale - 0.2);
+            applyTransform();
+            clampOffset();
+            updateZoomIndicator();
+        }
 
         // 翻页功能
         const goToPrevPage = () => {
